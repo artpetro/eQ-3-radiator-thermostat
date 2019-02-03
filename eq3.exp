@@ -71,7 +71,8 @@ set HELP(boost) "\
 set HELP(boost_off) "\
   boost off                                      - Deactivates boost mode"
 set HELP(timer) "\
-  timers                                         - Reads all timers\n\
+  timers                                         - Reads all timers and prints them human friendly\n\
+  timer-settings                                 - Reads all timers and prints them ready for re-configuration\n\
   timer <day>                                    - Reads timer for given day\n\
   timer <day> <base> <hh:mm> <temp> <hh:mm> ...  - Sets timer for given day and up to 7 events with temperature and time\n\
 \                                                 day:  mon, tue, wed, thu, fri, sat, sun, work, weekend, everyday, today, tomorrow\n\
@@ -161,6 +162,7 @@ set thermostat(name)           ""
 set thermostat(vendor)         ""
 set thermostat(last_request)   ""
 set thermostat(serial)         ""
+set thermostat(firmware)       ""
 set thermostat(pin)            ""
 set thermostat(status)         ""
 set thermostat(mode)           ""
@@ -495,14 +497,14 @@ proc getModeAsJson {} {
   foreach key [lsort [array names MODE]] {
 
     if {[expr $key == 0 && [hexToDecimal $thermostat(mode)] % 2 == 0] || [hexToDecimal $thermostat(mode)] & $key} {
-      set v \"ON\"
+      set v "true"
     } else {
-      set v \"OFF\"
+      set v "false"
     }
     append json "    \"" $MODE($key) "\" : " $v ",\n"
   }
-  append json "    \"on\" : \"" [expr $thermostat(temperature) == 30 ? "ON" : "OFF" ] "\",\n"
-  append json "    \"off\" : \"" [expr $thermostat(temperature) == 4.5 ? "ON" : "OFF" ] "\"\n"
+  append json "    \"on\" : " [expr $thermostat(temperature) == 30 ? "true" : "false" ] ",\n"
+  append json "    \"off\" : " [expr $thermostat(temperature) == 4.5 ? "true" : "false" ] "\n"
   append json "  \}"
   return $json
 }
@@ -581,7 +583,6 @@ proc printDevice {} {
 
   return $out
 }
-
 
 proc toJson {} {
   global REQUESTS
@@ -714,10 +715,44 @@ proc printTimer {day} {
   }
   for {set event 1} {$event <= 7} {incr event} {
     set key "[lindex $day 0]_[lindex $event 0]"
-    append out "\t[lindex $DAYS $day], $thermostat("timer_start_$key") - $thermostat("timer_end_$key"):\t$thermostat("timer_temperature_$key")°C\n"
-   if {"24:00" == "$thermostat("timer_end_$key")"} {
+    append out "\t$thermostat("timer_start_$key") - $thermostat("timer_end_$key"):\t$thermostat("timer_temperature_$key")°C\n"
+    if {"24:00" == "$thermostat("timer_end_$key")"} {
       break
     }
+  }
+  return $out
+}
+
+proc dumpTimer {day} {
+  global DAYS
+  global thermostat
+
+  set out "timer "
+  append out [string tolower [lindex $DAYS $day]]
+  append out " "
+  for {set event 1} {$event <= 7} {incr event} {
+    set key "[lindex $day 0]_[lindex $event 0]"
+    if {"00:00" == "$thermostat("timer_start_$key")"} {
+      append out "$thermostat("timer_temperature_$key") "
+      continue
+    }
+
+    append out "$thermostat("timer_start_$key") $thermostat("timer_temperature_$key") "
+
+    if {"24:00" == "$thermostat("timer_end_$key")"} {
+      append out "$thermostat("timer_end_$key")"
+      break
+    }
+  }
+
+  append out "\n"
+  return $out
+}
+
+proc dumpTimers {} {
+  set out ""
+  for {set day 0} {$day < 7} {incr day} {
+    append out [dumpTimer $day]
   }
   return $out
 }
@@ -973,6 +1008,9 @@ proc parseSerial {} {
     exit -1
   }
 
+  set firmware [expr ([hexToDecimal [lindex $raw_serial 1]] / 100.0)]
+  set thermostat(firmware) $firmware
+
   set serial ""
   for {set i 4} {$i < 14} {incr i} {
     set v [hexToDecimal [lindex $raw_serial $i]]
@@ -980,12 +1018,12 @@ proc parseSerial {} {
   }
   set thermostat(serial) $serial
 
-#  set pin ""
-#  append pin [expr ( [ascii $serial 3]       ^  [ascii $serial 7])       % 10]
-#  append pin [expr ( [ascii $serial 4]       ^  [ascii $serial 8])       % 10]
-#  append pin [expr ( [ascii $serial 5]       ^  [ascii $serial 9])       % 10]
-#  append pin [expr (([ascii $serial 6] - 48) ^ ([ascii $serial 0] - 65)) % 10]
-#  set thermostat(pin) $pin  
+  set pin ""
+  append pin [expr ( [ascii $serial 3]       ^  [ascii $serial 7])       % 10]
+  append pin [expr ( [ascii $serial 4]       ^  [ascii $serial 8])       % 10]
+  append pin [expr ( [ascii $serial 5]       ^  [ascii $serial 9])       % 10]
+  append pin [expr (([ascii $serial 6] - 48) ^ ([ascii $serial 0] - 65)) % 10]
+  set thermostat(pin) $pin  
 
 }
 
@@ -994,6 +1032,7 @@ proc printSerial {} {
 
   parseSerial
   puts "\nSerial no.:\t\t$thermostat(serial)"
+  puts "Firmware:\t\t$thermostat(firmware)"
   puts "Pair:\t\t\t$thermostat(pin)"
   puts ""
 }
@@ -1067,6 +1106,10 @@ proc doCommand {} {
         init 0
         setAwayMode [lindex $c 1] [lindex $c 2]
       }
+    }
+    ^timer-settings$ {
+      init $INIT(timer)
+      puts [dumpTimers]
     }
     ^timers$ {
       init $INIT(timer)
